@@ -1,39 +1,130 @@
-# Data — never commit ADNI data (restricted use agreement)
+# ============================================
+# Data — never commit ADNI data
+# ============================================
 data/raw/*
 data/interim/*
 data/processed/*
-!data/**/.gitkeep
 
+# Keep empty directory structure
+!data/raw/.gitkeep
+!data/interim/.gitkeep
+!data/processed/.gitkeep
+
+# ============================================
 # Outputs
+# ============================================
 outputs/*
 !outputs/.gitkeep
 
+# ============================================
+# Medical imaging files
+# ============================================
+*.nii
+*.nii.gz
+*.dcm
+*.dicom
+*.mha
+*.mhd
+*.nrrd
+
+# ============================================
 # Python
+# ============================================
 __pycache__/
 *.py[cod]
-.Python
-build/
-dist/
-*.egg-info/
+*$py.class
+
+# Virtual environments
 .venv/
 venv/
 env/
+ENV/
 
-# Notebooks
+# Packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+*.egg
+pip-wheel-metadata/
+
+# ============================================
+# Jupyter
+# ============================================
 .ipynb_checkpoints/
 
-# Tooling / caches
+# ============================================
+# Testing / linting / type checking
+# ============================================
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# ============================================
+# Python tooling / interactive sessions
+# ============================================
 .ipython/
+.python-version
 
-# Environment
+# ============================================
+# Environment / secrets
+# ============================================
 .env
-.env.local
+.env.*
+!.env.example
 
-# OS / editors
+# ============================================
+# macOS
+# ============================================
 .DS_Store
+.AppleDouble
+.LSOverride
+
+# ============================================
+# Windows
+# ============================================
 Thumbs.db
+Desktop.ini
+
+# ============================================
+# VS Code / JetBrains
+# ============================================
 .vscode/
 .idea/
+
+# ============================================
+# Logs / temporary files
+# ============================================
+*.log
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# ============================================
+# Model checkpoints / large training artifacts
+# ============================================
+*.pt
+*.pth
+*.ckpt
+*.onnx
+
+# ============================================
+# TensorBoard / experiment tracking
+# ============================================
+runs/
+wandb/
+mlruns/
+
+# ============================================
+# Compressed datasets / archives
+# ============================================
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.7z
