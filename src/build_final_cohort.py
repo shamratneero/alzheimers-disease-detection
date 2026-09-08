@@ -41,7 +41,7 @@ cohort = pd.read_csv(
 
 
 # =========================================================
-# DATE PARSING
+# PARSE DATES
 # =========================================================
 
 dx["EXAMDATE"] = pd.to_datetime(
@@ -62,22 +62,28 @@ for col in [
 
 
 # =========================================================
-# DEFINE AD EVENT
+# DEFINE QUALIFYING AD EVENT
 # =========================================================
 
 def is_ad_event(row):
+    """
+    A qualifying AD event must first be a dementia diagnosis.
 
-    # Must first be diagnosed as dementia
+    ADNI1:
+        DIAGNOSIS == 3 and DXAD == 1
+
+    ADNIGO / ADNI2 / ADNI3 / ADNI4:
+        DIAGNOSIS == 3 and DXDDUE == 1
+    """
+
     if row["DIAGNOSIS"] != 3:
         return False
 
     phase = row["PHASE"]
 
-    # ADNI1 uses DXAD
     if phase == "ADNI1":
         return row.get("DXAD") == 1
 
-    # Later ADNI phases use DXDDUE
     if phase in [
         "ADNIGO",
         "ADNI2",
@@ -96,7 +102,7 @@ dx["AD_EVENT"] = dx.apply(
 
 
 # =========================================================
-# BUILD CONVERTER QUALITY FLAGS
+# BUILD SUBJECT-LEVEL QUALITY FLAGS
 # =========================================================
 
 records = []
@@ -104,22 +110,33 @@ records = []
 for _, subject in cohort.iterrows():
 
     rid = subject["RID"]
-    outcome = subject["OUTCOME"]
+    original_outcome = subject["OUTCOME"]
 
-    # Defaults for non-converters
+    baseline_date = subject["MCI_BASELINE_DATE"]
+    horizon_date = subject["HORIZON_DATE"]
+
+    # -----------------------------------------------------
+    # Defaults
+    # -----------------------------------------------------
+
     has_post_ad_followup = False
     later_confirmed_ad = False
+
     reversion_mci = False
     reversion_cn = False
     reversion_any = False
 
     first_later_ad_date = pd.NaT
 
-    # -----------------------------------------------------
-    # Only converters have a FIRST_AD_DATE
-    # -----------------------------------------------------
+    competing_event_non_ad_dementia = False
+    first_non_ad_dementia_date = pd.NaT
 
-    if outcome == "converter":
+
+    # =====================================================
+    # CONVERTER-SPECIFIC AUDIT
+    # =====================================================
+
+    if original_outcome == "converter":
 
         first_ad_date = subject["FIRST_AD_DATE"]
 
@@ -161,9 +178,39 @@ for _, subject in cohort.iterrows():
                     ].min()
                 )
 
+
+    # =====================================================
+    # NEGATIVE-SIDE COMPETING EVENT AUDIT
+    # =====================================================
+
+    if original_outcome == "stable_mci":
+
+        window = dx[
+            (dx["RID"] == rid)
+            & dx["EXAMDATE"].notna()
+            & (dx["EXAMDATE"] >= baseline_date)
+            & (dx["EXAMDATE"] <= horizon_date)
+        ].copy()
+
+        # Dementia visits that are NOT qualifying AD events
+        non_ad_dementia = window[
+            (window["DIAGNOSIS"] == 3)
+            & (~window["AD_EVENT"])
+        ].copy()
+
+        if not non_ad_dementia.empty:
+
+            competing_event_non_ad_dementia = True
+
+            first_non_ad_dementia_date = (
+                non_ad_dementia["EXAMDATE"].min()
+            )
+
+
     records.append(
         {
             "RID": rid,
+
             "HAS_POST_AD_FOLLOWUP":
                 has_post_ad_followup,
 
@@ -181,6 +228,12 @@ for _, subject in cohort.iterrows():
 
             "REVERSION_ANY":
                 reversion_any,
+
+            "COMPETING_EVENT_NON_AD_DEMENTIA":
+                competing_event_non_ad_dementia,
+
+            "FIRST_NON_AD_DEMENTIA_DATE":
+                first_non_ad_dementia_date,
         }
     )
 
@@ -189,7 +242,7 @@ flags = pd.DataFrame(records)
 
 
 # =========================================================
-# MERGE FLAGS INTO SUBJECT COHORT
+# MERGE FLAGS
 # =========================================================
 
 final = cohort.merge(
@@ -201,49 +254,63 @@ final = cohort.merge(
 
 
 # =========================================================
+# CLEAN OUTCOME TERMINOLOGY
+# =========================================================
+
+# Start from original labels
+final["FINAL_OUTCOME"] = final["OUTCOME"]
+
+# Rename stable_mci because not everyone actually stayed MCI
+final.loc[
+    final["OUTCOME"] == "stable_mci",
+    "FINAL_OUTCOME"
+] = "ad_non_converter"
+
+# Override the two non-AD dementia cases
+final.loc[
+    final["COMPETING_EVENT_NON_AD_DEMENTIA"],
+    "FINAL_OUTCOME"
+] = "competing_event_non_ad_dementia"
+
+
+# =========================================================
 # PRIMARY BINARY LABEL
 # =========================================================
 
-# Converter = 1
-# Stable MCI = 0
-# Right-censored = missing because true 24-month
-# outcome is unknown.
-
 final["PRIMARY_LABEL"] = pd.NA
 
+# Positive
 final.loc[
-    final["OUTCOME"] == "converter",
+    final["FINAL_OUTCOME"] == "converter",
     "PRIMARY_LABEL"
 ] = 1
 
+# Clean negative
 final.loc[
-    final["OUTCOME"] == "stable_mci",
+    final["FINAL_OUTCOME"] == "ad_non_converter",
     "PRIMARY_LABEL"
 ] = 0
 
+# Right-censored remains NA
+# Competing-event non-AD dementia remains NA
+
 
 # =========================================================
-# STRICT CONFIRMATION LABEL
+# STRICT LABEL
 # =========================================================
-
-# Strict positive:
-# converter + later confirmed AD
-#
-# Stable MCI remains negative.
-#
-# Primary converters without later confirmation are
-# intentionally not treated as strict positives.
 
 final["STRICT_LABEL"] = pd.NA
 
+# Clean negatives stay negative
 final.loc[
-    final["OUTCOME"] == "stable_mci",
+    final["FINAL_OUTCOME"] == "ad_non_converter",
     "STRICT_LABEL"
 ] = 0
 
+# Only later-confirmed converters become strict positives
 final.loc[
     (
-        (final["OUTCOME"] == "converter")
+        (final["FINAL_OUTCOME"] == "converter")
         & (final["LATER_CONFIRMED_AD"])
     ),
     "STRICT_LABEL"
@@ -251,20 +318,20 @@ final.loc[
 
 
 # =========================================================
-# OTHER FLAGS
+# ADDITIONAL FLAGS
 # =========================================================
 
 final["RIGHT_CENSORED"] = (
-    final["OUTCOME"] == "right_censored"
+    final["FINAL_OUTCOME"] == "right_censored"
 )
 
 final["NO_POST_AD_FOLLOWUP"] = (
-    (final["OUTCOME"] == "converter")
+    (final["FINAL_OUTCOME"] == "converter")
     & (~final["HAS_POST_AD_FOLLOWUP"])
 )
 
 final["UNCONFIRMED_WITH_FOLLOWUP"] = (
-    (final["OUTCOME"] == "converter")
+    (final["FINAL_OUTCOME"] == "converter")
     & (final["HAS_POST_AD_FOLLOWUP"])
     & (~final["LATER_CONFIRMED_AD"])
 )
@@ -274,13 +341,13 @@ final["UNCONFIRMED_WITH_FOLLOWUP"] = (
 # SANITY CHECKS
 # =========================================================
 
-print("\n=== FINAL COHORT SIZE ===")
+print("\n=== TOTAL CLEAN BASELINE MCI COHORT ===")
 print(len(final))
 
 
-print("\n=== PRIMARY OUTCOME COUNTS ===")
+print("\n=== FINAL OUTCOME COUNTS ===")
 print(
-    final["OUTCOME"]
+    final["FINAL_OUTCOME"]
     .value_counts(dropna=False)
 )
 
@@ -299,20 +366,36 @@ print(
 )
 
 
-print("\n=== LATER CONFIRMED AD ===")
+print("\n=== COMPETING NON-AD DEMENTIA ===")
+print(
+    final[
+        final["COMPETING_EVENT_NON_AD_DEMENTIA"]
+    ][
+        [
+            "RID",
+            "PTID",
+            "MCI_BASELINE_DATE",
+            "FIRST_NON_AD_DEMENTIA_DATE",
+            "FINAL_OUTCOME",
+        ]
+    ].to_string(index=False)
+)
+
+
+print("\n=== CONVERTER CONFIRMATION ===")
 print(
     final.loc[
-        final["OUTCOME"] == "converter",
+        final["FINAL_OUTCOME"] == "converter",
         "LATER_CONFIRMED_AD"
     ]
     .value_counts(dropna=False)
 )
 
 
-print("\n=== REVERSION ANY ===")
+print("\n=== CONVERTER REVERSION ===")
 print(
     final.loc[
-        final["OUTCOME"] == "converter",
+        final["FINAL_OUTCOME"] == "converter",
         "REVERSION_ANY"
     ]
     .value_counts(dropna=False)
@@ -333,39 +416,54 @@ print(
 )
 
 
-# ---------------------------------------------------------
-# One row per subject
-# ---------------------------------------------------------
+# =========================================================
+# ASSERTIONS
+# =========================================================
 
+# One row per subject
 assert final["RID"].is_unique
 
-
-# ---------------------------------------------------------
-# Known cohort totals from our audits
-# ---------------------------------------------------------
-
+# Overall clean baseline cohort remains unchanged
 assert len(final) == 1744
 
+# Final mutually exclusive outcome counts
 assert (
-    final["OUTCOME"] == "converter"
+    final["FINAL_OUTCOME"] == "converter"
 ).sum() == 196
 
 assert (
-    final["OUTCOME"] == "stable_mci"
-).sum() == 829
+    final["FINAL_OUTCOME"] == "ad_non_converter"
+).sum() == 827
 
 assert (
-    final["OUTCOME"] == "right_censored"
+    final["FINAL_OUTCOME"] == "right_censored"
 ).sum() == 719
 
 assert (
+    final["FINAL_OUTCOME"]
+    == "competing_event_non_ad_dementia"
+).sum() == 2
+
+# These must sum to the full cohort
+assert (
+    (final["FINAL_OUTCOME"] == "converter").sum()
+    + (final["FINAL_OUTCOME"] == "ad_non_converter").sum()
+    + (final["FINAL_OUTCOME"] == "right_censored").sum()
+    + (
+        final["FINAL_OUTCOME"]
+        == "competing_event_non_ad_dementia"
+    ).sum()
+) == len(final)
+
+# Converter audits
+assert (
     final["LATER_CONFIRMED_AD"]
-    & (final["OUTCOME"] == "converter")
+    & (final["FINAL_OUTCOME"] == "converter")
 ).sum() == 152
 
 assert (
     final["REVERSION_ANY"]
-    & (final["OUTCOME"] == "converter")
+    & (final["FINAL_OUTCOME"] == "converter")
 ).sum() == 13
 
 assert (
@@ -375,6 +473,24 @@ assert (
 assert (
     final["UNCONFIRMED_WITH_FOLLOWUP"]
 ).sum() == 5
+
+# Primary training cohort
+assert (
+    final["PRIMARY_LABEL"] == 1
+).sum() == 196
+
+assert (
+    final["PRIMARY_LABEL"] == 0
+).sum() == 827
+
+# Strict sensitivity cohort
+assert (
+    final["STRICT_LABEL"] == 1
+).sum() == 152
+
+assert (
+    final["STRICT_LABEL"] == 0
+).sum() == 827
 
 
 # =========================================================
@@ -389,4 +505,4 @@ final.to_csv(
 print("\n=== SAVED ===")
 print(FINAL_PATH)
 
-print("\nFinal cohort build complete.")
+print("\nFinal cohort rebuild complete.")
