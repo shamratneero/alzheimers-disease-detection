@@ -23,8 +23,10 @@ mci = mci.sort_values(["RID", "EXAMDATE"])
 
 # Select the first documented MCI visit for each subject
 baseline = (
-    mci.groupby("RID", as_index=False)
-    .first()
+    mci
+    .sort_values(["RID", "EXAMDATE"])
+    .drop_duplicates(subset=["RID"], keep="first")
+    .copy()
 )
 
 # Keep useful columns only

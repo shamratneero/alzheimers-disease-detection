@@ -123,7 +123,7 @@ for _, base in clean_baseline.iterrows():
         first_ad_date = ad_within_24["EXAMDATE"].min()
         days_to_ad = (first_ad_date - baseline_date).days
 
-    elif last_followup_date is not pd.NaT and last_followup_date >= horizon_date:
+    elif pd.notna(last_followup_date) and last_followup_date >= horizon_date:
         outcome = "stable_mci"
         first_ad_date = pd.NaT
         days_to_ad = None
