@@ -1,0 +1,20 @@
+{
+  "n": 974,
+  "positives": 152,
+  "negatives": 822,
+  "predictors": [
+    "BASELINE_AGE_YEARS",
+    "SEX_CODE",
+    "EDUCATION_YEARS",
+    "APOE4_COUNT"
+  ],
+  "target": "STRICT_LABEL",
+  "n_splits": 5,
+  "random_state": 42,
+  "pooled_roc_auc": 0.6288337175054424,
+  "pooled_pr_auc": 0.22854097892986336,
+  "pooled_brier": 0.12886499312027272,
+  "pooled_balanced_accuracy": 0.5032894736842105,
+  "pooled_sensitivity": 0.006578947368421052,
+  "pooled_specificity": 1.0
+}
